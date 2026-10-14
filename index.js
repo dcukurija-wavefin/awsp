@@ -71,6 +71,7 @@ const promptWithFzf = (choices) => {
   const result = spawnSync('fzf', [
     '--height', '40%',
     '--reverse',
+    '--no-sort',
     '--prompt', 'AWS profile> ',
     '--query', query,
     '--select-1',
@@ -93,7 +94,8 @@ const promptWithFzf = (choices) => {
 
 const promptProfileChoice = (data) => {
   const profiles = parseProfiles(data)
-    .filter((profile) => !ssoFilter || profile.sso === ssoFilter);
+    .filter((profile) => !ssoFilter || profile.sso === ssoFilter)
+    .sort((a, b) => a.sso.localeCompare(b.sso) || a.name.localeCompare(b.name));
 
   if (!profiles.length && ssoFilter) {
     console.log(`No profiles found for SSO instance "${ssoFilter}".`);
