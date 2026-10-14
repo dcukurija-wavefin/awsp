@@ -32,6 +32,22 @@ alias awsp="source _awsp"
 awsp
 ```
 
+If [fzf](https://github.com/junegunn/fzf) is installed, profiles are picked with fuzzy search. Otherwise the plain list prompt is used.
+
+Profiles created by [aws-sso](https://github.com/synfinatic/aws-sso-cli) are listed with the name of their SSO instance in front, so you can filter by instance too. Other profiles show `-`.
+
+To only list the profiles of one aws-sso instance:
+```sh
+awsp --sso <instance>
+```
+
+Pass a query to pre-filter the list. If it matches a single profile, that profile is selected immediately:
+```sh
+awsp <query>
+```
+
+Pressing Esc keeps the current profile.
+
 ## Show your AWS Profile in your shell prompt
 For better visibility into what your shell is set to it's helpful to configure your prompt to show the value of the env variable `AWS_PROFILE`.
 

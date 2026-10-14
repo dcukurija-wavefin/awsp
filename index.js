@@ -1,38 +1,131 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
+const { spawnSync } = require('child_process');
 const inquirer = require('inquirer');
 
 console.log('AWS Profile Switcher');
 
 const homeDir = process.env['HOME']
-const profileRegex = /\[profile .*]/g;
-const bracketsRemovalRegx = /(\[profile )|(\])/g;
+const profileHeaderRegex = /^\[profile (.*)\]\s*$/;
+// Matches the SSO instance in profiles written by `aws-sso setup profiles`,
+// e.g. credential_process = aws-sso -S "<instance>" process --arn ...
+const ssoInstanceRegex = /^credential_process\s*=.*aws-sso.*?(?:-S|--sso)[ =]"?([^"\s]+)"?/;
+const labelSeparator = ' | ';
+const noSsoLabel = '-';
 const defaultProfileChoice = 'default';
+const configPath = `${homeDir}/.aws/config`;
+
+// Usage: _awsp_prompt [--sso <instance>] [query...]
+const parseArgs = (args) => {
+  const ssoIndex = args.indexOf('--sso');
+
+  if (ssoIndex === -1) {
+    return { sso: null, query: args.join(' ') };
+  }
+
+  const rest = args.filter((_, i) => i !== ssoIndex && i !== ssoIndex + 1);
+
+  return { sso: args[ssoIndex + 1], query: rest.join(' ') };
+};
+
+const { sso: ssoFilter, query } = parseArgs(process.argv.slice(2));
+
+const hasFzf = () => spawnSync('fzf', ['--version']).status === 0;
+
+// Returns [{ name, sso }] for every [profile ...] section in ~/.aws/config
+const parseProfiles = (data) => {
+  const profiles = [];
+  let current = null;
+
+  data.split('\n').forEach((line) => {
+    const header = line.match(profileHeaderRegex);
+
+    if (header) {
+      current = { name: header[1], sso: noSsoLabel };
+      profiles.push(current);
+    } else if (line.startsWith('[')) {
+      current = null;
+    } else if (current) {
+      const sso = line.match(ssoInstanceRegex);
+
+      if (sso) {
+        current.sso = sso[1];
+      }
+    }
+  });
+
+  return profiles;
+};
+
+const toLabels = (profiles) => {
+  const width = Math.max(...profiles.map((profile) => profile.sso.length));
+
+  return profiles.map((profile) => ({
+    name: `${profile.sso.padEnd(width)}${labelSeparator}${profile.name}`,
+    value: profile.name
+  }));
+};
+
+const promptWithFzf = (choices) => {
+  const result = spawnSync('fzf', [
+    '--height', '40%',
+    '--reverse',
+    '--prompt', 'AWS profile> ',
+    '--query', query,
+    '--select-1',
+    '--exit-0'
+  ], {
+    input: choices.map((choice) => choice.name).join('\n'),
+    stdio: ['pipe', 'pipe', 'inherit'],
+    encoding: 'utf8'
+  });
+
+  // Esc / Ctrl-C / no match: keep the current profile
+  if (result.status !== 0) {
+    return { profile: process.env.AWS_PROFILE || defaultProfileChoice };
+  }
+
+  const line = result.stdout.trim();
+
+  return { profile: line.slice(line.indexOf(labelSeparator) + labelSeparator.length) };
+};
 
 const promptProfileChoice = (data) => {
-  const matches = data.match(profileRegex);
+  const profiles = parseProfiles(data)
+    .filter((profile) => !ssoFilter || profile.sso === ssoFilter);
 
-  if (!matches) {
+  if (!profiles.length && ssoFilter) {
+    console.log(`No profiles found for SSO instance "${ssoFilter}".`);
+    console.log(`Run: aws-sso -S ${ssoFilter} setup profiles`);
+
+    return { profile: process.env.AWS_PROFILE || defaultProfileChoice };
+  }
+
+  if (!profiles.length) {
     console.log('No profiles found.');
     console.log('Refer to this guide for help on setting up a new AWS profile:');
     console.log('https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-getting-started.html');
 
-    return;
+    return { profile: process.env.AWS_PROFILE || defaultProfileChoice };
   }
 
-  const profiles = matches.map((match) => {
-    return match.replace(bracketsRemovalRegx, '');
-  });
+  if (!ssoFilter) {
+    profiles.push({ name: defaultProfileChoice, sso: noSsoLabel });
+  }
 
-  profiles.push(defaultProfileChoice);
+  const choices = toLabels(profiles);
+
+  if (hasFzf()) {
+    return promptWithFzf(choices);
+  }
 
   const profileChoice = [
     {
       type: 'list',
       name: 'profile',
       message: 'Choose a profile',
-      choices: profiles,
+      choices,
       default: process.env.AWS_PROFILE || defaultProfileChoice
     }
   ];
@@ -42,7 +135,7 @@ const promptProfileChoice = (data) => {
 
 const readAwsProfiles = () => {
   return new Promise((resolve, reject) => {
-    fs.readFile(`${homeDir}/.aws/config`, 'utf8', (err, data) => {
+    fs.readFile(configPath, 'utf8', (err, data) => {
       if (err) {
         reject(err);
       } else {
