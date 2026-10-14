@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
 const fs = require('fs');
+const readline = require('readline');
 const { spawnSync } = require('child_process');
-const inquirer = require('inquirer');
 
 console.log('AWS Profile Switcher');
 
@@ -92,6 +92,45 @@ const promptWithFzf = (choices) => {
   return { profile: line.slice(line.indexOf(labelSeparator) + labelSeparator.length) };
 };
 
+// Fallback when fzf is not installed: numbered list read from stdin
+const promptWithList = (choices) => {
+  const current = process.env.AWS_PROFILE || defaultProfileChoice;
+  const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+  const matches = choices.filter((choice) =>
+    words.every((word) => choice.name.toLowerCase().includes(word)));
+
+  if (matches.length <= 1) {
+    return { profile: matches.length ? matches[0].value : current };
+  }
+
+  matches.forEach((choice, i) => {
+    const marker = choice.value === current ? '*' : ' ';
+    console.log(`${marker}${String(i + 1).padStart(3)}) ${choice.name}`);
+  });
+
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+
+  return new Promise((resolve) => {
+    const ask = () => rl.question('Choose a profile (Enter keeps current): ', (answer) => {
+      const index = Number(answer.trim()) - 1;
+
+      if (!answer.trim()) {
+        resolve({ profile: current });
+        rl.close();
+      } else if (Number.isInteger(index) && matches[index]) {
+        resolve({ profile: matches[index].value });
+        rl.close();
+      } else {
+        ask();
+      }
+    });
+
+    // Ctrl-D / closed input: keep the current profile
+    rl.on('close', () => resolve({ profile: current }));
+    ask();
+  });
+};
+
 const promptProfileChoice = (data) => {
   const profiles = parseProfiles(data)
     .filter((profile) => !ssoFilter || profile.sso === ssoFilter)
@@ -122,17 +161,7 @@ const promptProfileChoice = (data) => {
     return promptWithFzf(choices);
   }
 
-  const profileChoice = [
-    {
-      type: 'list',
-      name: 'profile',
-      message: 'Choose a profile',
-      choices,
-      default: process.env.AWS_PROFILE || defaultProfileChoice
-    }
-  ];
-
-  return inquirer.prompt(profileChoice);
+  return promptWithList(choices);
 }
 
 const readAwsProfiles = () => {

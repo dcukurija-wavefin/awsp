@@ -13,8 +13,5 @@
   "bin": {
     "_awsp_prompt": "./index.js",
     "_awsp": "./run.sh"
-  },
-  "dependencies": {
-    "inquirer": "^5.0.1"
   }
 }
